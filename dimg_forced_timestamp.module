@@ -1,0 +1,268 @@
+<?php
+/**
+ * DIMG TimeWarp (formerly Switch Date)
+ *  - Allows the user to view the site's content in the past or future
+ */
+
+/**
+ * Forced Timestamp uses ERS internally; need to disable ERS block
+ */
+function dimg_forced_timestamp_block_info_alter(&$blocks, $theme, $code_blocks) {
+  if ($blocks['ers']['preview-schedule']['region'] != -1) {
+    drupal_set_message(t('ERS preview schedule block has been disabled.  If using DIMG Forced Timestamp outside of the admin toolbar, enable the DIMG Forced Timestamp blocks.'));
+    $blocks['ers']['preview-schedule']['region'] = -1;
+  }
+}
+
+/**
+ * Blocks for the popup and Admin override
+ *  Will be imported into the toolbar override -- Do not make active
+ *  in the admin panel.
+ *
+ * Implements hook_block_list()
+ */
+function dimg_forced_timestamp_block_info() {
+  $blocks['dimg_timewarp'] = array(
+    'info' => t('DIMG Forced Timestamp'),
+    'properties' => array('administrative' => TRUE),
+    'cache' => DRUPAL_NO_CACHE,
+  );
+  $blocks['dimg_timewarp_popup'] = array(
+    'info' => t('DIMG Forced Timestamp Popup'),
+    'properties' => array('administrative' => TRUE),
+    'cache' => DRUPAL_NO_CACHE,
+  );
+  return $blocks;
+}
+
+/**
+ * Implements hook_block_view()
+ */
+function dimg_forced_timestamp_block_view($delta) {
+  switch ($delta) {
+    case 'dimg_timewarp':
+      return dimg_forced_timestamp_timewarp_block();
+    case 'dimg_timewarp_popup':
+      return dimg_forced_timestamp_timewarp_popup_block();
+  }
+}
+
+/**
+ * Check the user access and continue to run the widget
+ */
+function dimg_forced_timestamp_timewarp_block() {
+  if (user_access('force timestamp')) {
+    $block['content'] = dimg_forced_timestamp_timewarp_widget();
+    return $block;
+  }
+}
+
+/**
+ * Pupup version of the same check
+ */
+function dimg_forced_timestamp_timewarp_popup_block() {
+  if (user_access('force timestamp')) {
+    $block['content'] = dimg_forced_timestamp_timewarp_popup_widget();
+    return $block;
+  }
+}
+
+/**
+ * This properly calls the form and returns nothing if the form should
+ * not exist.
+ */
+function dimg_forced_timestamp_timewarp_widget() {
+  if (! user_access('force timestamp')) {
+    return;
+  }
+  // Calling the ERS (required) function to collect active elements on the page
+  $scheduled = &drupal_static('ers_set_entity_scheduled', array());
+
+  // No widget if on an edit path.
+  if (drupal_static('ers_set_on_edit_path', FALSE)) {
+    return;
+  }
+
+  $form_state = array(
+    'method' => 'get',
+    'no_redirect' => FALSE,
+  );
+
+  return drupal_build_form('dimg_forced_timestamp_timewarp_form', $form_state);
+}
+
+/**
+ * THe admin select to view all active dates on the page, plus the abiility to
+ * select Now and Custom options.
+ *
+ * [From ERS]
+ * Since everything that was loaded on this page has loaded its schedule, we
+ * simplify things by simply providing a list of all possible schedule changes.
+ * The user can quickly tell when things will change by checking the drop down,
+ * and pick one.
+ *
+ * The form submits via $_GET and hook_entity_load uses this information to
+ * swap out for the future revision. Because it is a $_GET form this form
+ * MUST be called with drupal_build_form and not drupal_get_form or it will
+ * not acquire input from the correct location.
+ */
+function dimg_forced_timestamp_timewarp_form($form, &$form_state) {
+  $scheduled = &drupal_static('ers_set_entity_scheduled', array());
+  $timestamp = 0;
+  if (isset($_SESSION['forced_timestamp'])) {
+    $timestamp = $_SESSION['forced_timestamp'];
+  }
+  $options = array(
+    0 => t('--- Now ---')
+  );
+  foreach ($scheduled as $entity_type => $schedules) {
+    foreach ($schedules as $entity_id => $entity) {
+      foreach ($entity->ers_schedule as $revision_id => $schedule) {
+        $options[$schedule->publish_date] = format_date($schedule->publish_date, 'short');
+        if ($timestamp == $schedule->publish_date) {
+          $timestamp = 0;
+        }
+      }
+    }
+  }
+// If we are running on a custom timestamp, show it with flair
+  if (isset($_SESSION['forced_timestamp'])) {
+    if ($timestamp) {
+      $options[$_SESSION['forced_timestamp']] = format_date($_SESSION['forced_timestamp'], 'short') . ' *';
+    }
+  }
+// Use an alpha Custom option to easily catch with JS
+  $options['C'] = t('-- Custom --');
+
+  $form['#method'] = 'get';
+  $form['forced_timestamp'] = array(
+    '#title'   => t('Preview Date/Time'),
+    '#type'    => 'select',
+    '#options' => $options,
+  );
+  if (isset($_SESSION['forced_timestamp'])) {
+    $form['forced_timestamp']['#default_value'] = $_SESSION['forced_timestamp'];
+  }
+  $form['actions'] = array( '#type' => 'actions');
+  $form['actions']['submit'] = array(
+    '#type'  => 'submit',
+    '#value' => t('Preview'),
+    '#id'    => 'timewarp-submit'
+  );
+  return $form;
+}
+
+/**
+ * Submit callback for dimg_forced_timestamp_timewarp_form()
+ *
+ * Show a highlight on a timewarp change
+ */
+function dimg_forced_timestamp_timewarp_form_submit($form, &$form_state) {
+  if ($form_state['values']['forced_timestamp'] == 0) {
+    unset($_SESSION['forced_timestamp']);
+  }
+  else {
+    drupal_set_message(t('Showing preview for %date', array('%date' => format_date($form_state['values']['forced_timestamp']))));
+  }
+}
+
+/**
+ * Widget to allow previewing of the schedule.
+ *
+ * This properly calls the form and returns nothing if the form should
+ * not exist.
+ */
+function dimg_forced_timestamp_timewarp_popup_widget() {
+  if (! user_access('force timestamp')) {
+    return;
+  }
+  $form_state = array(
+    'method' => 'get',
+    'no_redirect' => FALSE,
+  );
+  return drupal_build_form('dimg_forced_timestamp_timewarp_popup_form', $form_state);
+}
+
+/**
+ * Form for the popup, called from JS for setting a custom field.
+ *  Date Popup module recommended but not required.
+ */
+function dimg_forced_timestamp_timewarp_popup_form($form, &$form_state) {
+  $form['timewarp_popup']['timewarp_date'] = array(
+    '#type' => 'textfield',
+    '#title' => t('Custom Date/Time Preview'),
+    '#maxlength' => 25,
+    '#description' => t('Custom time will be shown with an asterisk. (*)')
+  );
+
+  if (module_exists('date_popup')) {
+    unset($form['timewarp_popup']['timewarp_date']['#maxlength']);
+    $form['timewarp_popup']['timewarp_date']['#type'] = 'date_popup';
+    $date = new DateObject();
+    $form['timewarp_popup']['timewarp_date']['#default_value'] = $date->format(DATE_FORMAT_DATETIME);
+  }
+  else {
+    $form['timewarp_popup']['timewarp_date']['#default_value'] = format_date(time(), 'custom', 'Y-m-d H:i:s');
+    $form['timewarp_popup']['timewarp_date']['#description'] = t('Format: %time.<br />The date format is YYYY-MM-DD.<br />Custom time will be shown with an asterisk. (*)', array('%time' => format_date(time(), 'custom', 'Y-m-d H:i:s')));
+  }
+
+  $form['actions'] = array( '#type' => 'actions');
+  $form['actions']['submit'] = array(
+    '#type'  => 'submit',
+    '#value' => t('Go'),
+    '#id'    => 'timewarp_popup_submit'
+  );
+  $form['actions']['close'] = array(
+    '#type'  => 'button',
+    '#value' => t('Close'),
+    '#id'    => 'timewarp_popup_close'
+  );
+  return $form;
+}
+
+/**
+ * Submit callback for dimg_forced_timestamp_timewarp_popup_form()
+ *
+ * Need to format the date back to unix timestamp and set the session variable.
+ */
+function dimg_forced_timestamp_timewarp_popup_form_submit($form, &$form_state) {
+  $timewarp = drupal_array_get_nested_value($form_state['values'], $form['timewarp_popup']['timewarp_date']['#parents']);
+  if (module_exists('date_popup')) {
+    $date = new DateObject($timewarp);
+    $timewarp = $date->format(DATE_FORMAT_UNIX);
+  }
+  else {
+    $timewarp = strtotime($timewarp);
+  }
+  if ($timewarp) {
+    $_SESSION['forced_timestamp'] = $timewarp;
+    drupal_set_message(t('Showing preview for %date', array('%date' => format_date($timewarp))));
+  }
+}
+
+/**
+ * Some validation that may, or may not, be used for TimeWarp.
+ */
+function dimg_forced_timestamp_form_alter(&$form, &$form_state, $form_id) {
+ if (strpos($form_id, "_node_form")) {
+   $form['#validate'][] = 'dimg_forced_timestamp_form_validate';
+ }
+}
+ 
+function dimg_forced_timestamp_form_validate($form, &$form_state) {
+  if (isset($_POST['ers_schedule_time']['date']) && strtotime($_POST['ers_schedule_time']['date'] . ' ' . $_POST['ers_schedule_time']['time']) < date('U')) {
+    form_set_error('ers_schedule_time', 'Scheduled date should not be in the past');
+  }
+}
+
+/**
+ * Implements hook_theme_registry_alter()
+ * 
+ * Override the template file for the admin toolbar with our local one
+ */ 
+function dimg_forced_timestamp_theme_registry_alter(&$theme_registry) {
+  $theme_registry['toolbar']['theme path'] =
+    $theme_registry['toolbar']['path'] =
+    drupal_get_path('module', 'dimg_forced_timestamp');
+}
+

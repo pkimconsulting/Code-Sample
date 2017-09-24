@@ -1,0 +1,13 @@
+name = Disney Forced Timestamp Changes
+description = Addon module to Forced Timestamp module
+core = 7.x
+
+version = "7.x-1.x-alpha"
+
+package = Disney
+configure = admin/config/development/forced_timestamp
+
+dependencies[] = ers
+dependencies[] = force_timestamp
+scripts[] = js/dimg_forced_timestamp.js
+stylesheets[all][] = css/dimg_forced_timestamp.css
